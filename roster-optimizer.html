@@ -1050,6 +1050,8 @@
         let analysisResults = [];
         let mohOnlyResults = [];
         let nonOHIPResults = [];
+        let rosterEndResults = []; // Patients who have come off the ministry roster
+        let newMinistryPatients = []; // New patients added to ministry roster
 
         // DOM elements
         const emrUpload = document.getElementById('emrUpload');
@@ -1188,6 +1190,8 @@
             analysisResults = [];
             mohOnlyResults = [];
             nonOHIPResults = [];
+            rosterEndResults = [];
+            newMinistryPatients = [];
             emrFileInput.value = '';
             ministryFileInput.value = '';
             
@@ -1251,8 +1255,13 @@
                 showStatus('Parsing Ministry file...', 'info');
                 
                 // Parse Ministry file
-                const ministryHealthCards = await parseMinistryFile(ministryFile);
-                showStatus(`Found ${ministryHealthCards.length} patients in Ministry roster`, 'info');
+                const ministryData = await parseMinistryFile(ministryFile);
+                const ministryHealthCards = ministryData.activePatients;
+                const newPatientsFromMinistry = ministryData.newPatients;
+                const rosterEndPatients = ministryData.rosterEndPatients;
+                const ministryStats = ministryData.statistics;
+                
+                showStatus(`Found ${ministryHealthCards.length} active patients in Ministry roster (${newPatientsFromMinistry.length} new, ${rosterEndPatients.length} came off roster)`, 'info');
                 
                 showStatus('Comparing files...', 'info');
                 
@@ -1342,8 +1351,8 @@
                     console.log(`Ministry card "${ministryCard}" found in EMR: ${foundInEMR}`);
                 }
                 
-                // COMPLETELY NEW APPROACH - SIMPLE ARRAY COMPARISON
-                console.log('=== COMPLETELY NEW APPROACH ===');
+                // IMPROVED COMPARISON APPROACH WITH BETTER ERROR HANDLING
+                console.log('=== IMPROVED COMPARISON APPROACH ===');
                 
                 // First, let's see what we actually have
                 console.log('EMR Patients Count:', emrPatients.length);
@@ -1351,56 +1360,64 @@
                 console.log('First EMR Patient:', emrPatients[0]);
                 console.log('First Ministry Patient:', ministryHealthCards[0]);
                 
-                // Create simple arrays of health card numbers
+                // Create simple arrays of health card numbers with validation
                 const emrHealthCardsArray = [];
                 const ministryHealthCardsArray = [];
                 
-                // Extract EMR health cards
+                // Extract EMR health cards with validation
                 for (let i = 0; i < emrPatients.length; i++) {
-                    emrHealthCardsArray.push(emrPatients[i].healthCard);
+                    const healthCard = emrPatients[i].healthCard;
+                    if (healthCard && typeof healthCard === 'string' && healthCard.trim().length > 0) {
+                        emrHealthCardsArray.push(healthCard.trim());
+                    }
                 }
                 
-                // Extract Ministry health cards
+                // Extract Ministry health cards with validation
                 for (let i = 0; i < ministryHealthCards.length; i++) {
-                    ministryHealthCardsArray.push(ministryHealthCards[i]['Health Number']);
+                    const healthCard = ministryHealthCards[i]['Health Number'];
+                    if (healthCard && typeof healthCard === 'string' && healthCard.trim().length > 0) {
+                        ministryHealthCardsArray.push(healthCard.trim());
+                    }
                 }
                 
                 console.log('EMR Health Cards (first 5):', emrHealthCardsArray.slice(0, 5));
                 console.log('Ministry Health Cards (first 5):', ministryHealthCardsArray.slice(0, 5));
                 
-                // Simple comparison - EMR only
+                // Validate that we have data to compare
+                if (emrHealthCardsArray.length === 0) {
+                    throw new Error('No valid health card numbers found in EMR file');
+                }
+                if (ministryHealthCardsArray.length === 0) {
+                    throw new Error('No valid health card numbers found in Ministry file');
+                }
+                
+                // Improved comparison using validated arrays
                 if (analysisType === 'emr-only' || analysisType === 'all') {
                     analysisResults = [];
                     for (let i = 0; i < emrPatients.length; i++) {
                         const emrCard = emrPatients[i].healthCard;
-                        let found = false;
-                        for (let j = 0; j < ministryHealthCardsArray.length; j++) {
-                            if (ministryHealthCardsArray[j] === emrCard) {
-                                found = true;
-                                break;
+                        if (emrCard && typeof emrCard === 'string' && emrCard.trim().length > 0) {
+                            const trimmedCard = emrCard.trim();
+                            // Use includes for better performance
+                            if (!ministryHealthCardsArray.includes(trimmedCard)) {
+                                analysisResults.push(emrPatients[i]);
                             }
-                        }
-                        if (!found) {
-                            analysisResults.push(emrPatients[i]);
                         }
                     }
                     console.log(`EMR-Only Results: ${analysisResults.length} patients`);
                 }
                 
-                // Simple comparison - Ministry only
+                // Improved comparison using validated arrays
                 if (analysisType === 'moh-only' || analysisType === 'all') {
                     mohOnlyResults = [];
                     for (let i = 0; i < ministryHealthCards.length; i++) {
                         const ministryCard = ministryHealthCards[i]['Health Number'];
-                        let found = false;
-                        for (let j = 0; j < emrHealthCardsArray.length; j++) {
-                            if (emrHealthCardsArray[j] === ministryCard) {
-                                found = true;
-                                break;
+                        if (ministryCard && typeof ministryCard === 'string' && ministryCard.trim().length > 0) {
+                            const trimmedCard = ministryCard.trim();
+                            // Use includes for better performance
+                            if (!emrHealthCardsArray.includes(trimmedCard)) {
+                                mohOnlyResults.push(ministryHealthCards[i]);
                             }
-                        }
-                        if (!found) {
-                            mohOnlyResults.push(ministryHealthCards[i]);
                         }
                     }
                     console.log(`Ministry-Only Results: ${mohOnlyResults.length} patients`);
@@ -1409,14 +1426,25 @@
                 // Skip Non-OHIP analysis - not needed
                 nonOHIPResults = [];
                 
+                // Store the additional results globally
+                rosterEndResults = rosterEndPatients;
+                newMinistryPatients = newPatientsFromMinistry;
+                
                 console.log('=== FINAL RESULTS ===');
                 console.log(`EMR-only: ${analysisResults.length}`);
                 console.log(`Ministry-only: ${mohOnlyResults.length}`);
                 console.log(`Non-OHIP: ${nonOHIPResults.length}`);
+                console.log(`Roster End patients: ${rosterEndResults.length}`);
+                console.log(`New Ministry patients: ${newMinistryPatients.length}`);
                 
                 displayResults(analysisType);
                 
-                const statusMessage = `Analysis complete! Found ${analysisResults.length} patients on EMR roster but not on MOH list, and ${mohOnlyResults.length} patients on MOH list but not on EMR roster.`;
+                // Calculate additional statistics
+                const totalEMRPatients = emrPatients.length;
+                const totalMinistryPatients = ministryHealthCards.length;
+                const patientsInBoth = totalEMRPatients - analysisResults.length;
+                
+                const statusMessage = `Analysis complete! Processed ${totalEMRPatients} EMR patients and ${totalMinistryPatients} Ministry patients. Found ${analysisResults.length} patients on EMR roster but not on MOH list (candidates for q200 rostering), and ${mohOnlyResults.length} patients on MOH list but not on EMR roster (may have left your practice). ${patientsInBoth} patients are on both rosters.`;
                 
                 showStatus(statusMessage, 'success');
                 
@@ -1688,15 +1716,22 @@
                                 const part2 = parts[i-1]?.trim();
                                 
                                 // Check if these look like proper names (letters only, reasonable length, not common non-name words)
-                                const nonNameWords = ['MALE', 'FEMALE', 'M', 'F', 'CAN', 'ON', 'QC', 'BC', 'AB', 'MB', 'SK', 'NB', 'NS', 'PE', 'NL', 'YT', 'NT', 'NU', 'KEVIN', 'BROPHY'];
+                                const nonNameWords = ['MALE', 'FEMALE', 'M', 'F', 'CAN', 'ON', 'QC', 'BC', 'AB', 'MB', 'SK', 'NB', 'NS', 'PE', 'NL', 'YT', 'NT', 'NU', 'KEVIN', 'BROPHY', 'ROSTERED', 'CONNECT_APP', 'EMAIL', 'BOTH'];
+                                
+                                // More flexible name detection - allow for names with apostrophes, hyphens, and common name patterns
+                                const isNamePattern = /^[A-Za-z\s\-'\.]+$/;
                                 
                                 if (part1 && part2 && 
-                                    /^[A-Za-z\s\-]+$/.test(part1) && 
-                                    /^[A-Za-z\s\-]+$/.test(part2) &&
-                                    part1.length > 2 && part1.length < 25 &&
-                                    part2.length > 2 && part2.length < 25 &&
+                                    isNamePattern.test(part1) && 
+                                    isNamePattern.test(part2) &&
+                                    part1.length >= 2 && part1.length <= 30 &&
+                                    part2.length >= 2 && part2.length <= 30 &&
                                     !nonNameWords.includes(part1.toUpperCase()) &&
-                                    !nonNameWords.includes(part2.toUpperCase())) {
+                                    !nonNameWords.includes(part2.toUpperCase()) &&
+                                    // Make sure they're not numbers or common data fields
+                                    !/^\d+$/.test(part1) && !/^\d+$/.test(part2) &&
+                                    !part1.includes('@') && !part2.includes('@') &&
+                                    !part1.includes('+1') && !part2.includes('+1')) {
                                     lastName = part1;
                                     firstName = part2;
                                     
@@ -2001,7 +2036,14 @@
         function parseXMLData(xmlText) {
             console.log('=== MINISTRY XML PROCESSING ===');
             const mohData = [];
+            const rosterEndPatients = []; // Patients who came off the roster
             const seenHealthNumbers = new Set(); // Track unique health numbers
+            
+            // Define reason codes that indicate patients should be removed from roster
+            const removeFromRosterCodes = ['01D', '02D', '12D', '14D', '44D', '60D', '73D', '74D', '90D', '91D', '99D'];
+            
+            // Define consent statuses that indicate patients should be excluded
+            const excludedConsentStatuses = ['R', 'N']; // R = Revoked, N = Ended by Ministry
             
             try {
                 const parser = new DOMParser();
@@ -2024,6 +2066,14 @@
                 const valueNodes = xmlDoc.querySelectorAll('data row value');
                 console.log(`Total value nodes found: ${valueNodes.length}`);
                 
+                let totalProcessed = 0;
+                let validPatients = 0;
+                let excludedByReasonCode = 0;
+                let excludedByConsent = 0;
+                let excludedByInvalidHealthCard = 0;
+                let excludedByRosterEnd = 0;
+                let duplicates = 0;
+                
                 for (let i = 0; i < valueNodes.length; i += headers.length) {
                     const rowValues = [];
                     for (let j = 0; j < headers.length; j++) {
@@ -2036,30 +2086,100 @@
                         rowDict[header] = rowValues[index];
                     });
                     
+                    totalProcessed++;
                     const healthNumber = rowDict['Health Number'] || '';
+                    const reasonCode = rowDict['Reason Code'] || '';
+                    const consentStatus = rowDict['Consent Status'] || '';
+                    const patientType = rowDict['Patient Type'] || '';
+                    const rosterEnd = rowDict['Roster End'] || '';
+                    const rosterStart = rowDict['Roster Start'] || '';
                     
-                    // Only include valid 10-digit health numbers and avoid duplicates
-                    if (healthNumber && healthNumber.length === 10 && /^\d{10}$/.test(healthNumber)) {
-                        if (!seenHealthNumbers.has(healthNumber)) {
-                            seenHealthNumbers.add(healthNumber);
-                            mohData.push(rowDict);
-                            
-                            // Debug first few patients
-                            if (mohData.length <= 3) {
-                                console.log(`Ministry patient ${mohData.length}: ${healthNumber} (${rowDict['Patient Name'] || 'Unknown'})`);
-                            }
-                        } else {
-                            console.log(`Duplicate health number found: ${healthNumber} - skipping`);
-                        }
+                    // Skip if health number is invalid
+                    if (!healthNumber || healthNumber.length !== 10 || !/^\d{10}$/.test(healthNumber)) {
+                        excludedByInvalidHealthCard++;
+                        continue;
+                    }
+                    
+                    // Skip if already processed (duplicate)
+                    if (seenHealthNumbers.has(healthNumber)) {
+                        duplicates++;
+                        continue;
+                    }
+                    
+                    // Check if patient has roster end date (came off roster)
+                    if (rosterEnd && rosterEnd.trim() !== '') {
+                        excludedByRosterEnd++;
+                        // Add to roster end results for separate reporting
+                        rowDict['_exclusion_reason'] = 'Roster End';
+                        rowDict['_exclusion_details'] = `Came off roster on: ${rosterEnd}`;
+                        rowDict['_roster_end_date'] = rosterEnd;
+                        rosterEndPatients.push(rowDict);
+                        console.log(`Patient ${healthNumber} came off roster on: ${rosterEnd}`);
+                        continue;
+                    }
+                    
+                    // Skip if reason code indicates removal from roster
+                    if (removeFromRosterCodes.includes(reasonCode)) {
+                        excludedByReasonCode++;
+                        console.log(`Excluded patient ${healthNumber} due to reason code: ${reasonCode} (REMOVE FROM ROSTER)`);
+                        continue;
+                    }
+                    
+                    // Skip if consent status indicates revoked or ended
+                    if (excludedConsentStatuses.includes(consentStatus)) {
+                        excludedByConsent++;
+                        console.log(`Excluded patient ${healthNumber} due to consent status: ${consentStatus} (${consentStatus === 'R' ? 'REVOKED BY PATIENT' : 'ENDED BY MINISTRY'})`);
+                        continue;
+                    }
+                    
+                    // Check if this is a new patient (has roster start date)
+                    if (rosterStart && rosterStart.trim() !== '') {
+                        rowDict['_is_new_patient'] = true;
+                        rowDict['_roster_start_date'] = rosterStart;
+                        console.log(`New patient ${healthNumber} added to roster on: ${rosterStart}`);
+                    }
+                    
+                    // Add valid patient to results
+                    seenHealthNumbers.add(healthNumber);
+                    validPatients++;
+                    mohData.push(rowDict);
+                    
+                    // Debug first few patients
+                    if (mohData.length <= 3) {
+                        console.log(`Valid Ministry patient ${mohData.length}: ${healthNumber} (${rowDict['Patient Name'] || 'Unknown'}) - Reason: ${reasonCode || 'None'}, Consent: ${consentStatus || 'P'}, Type: ${patientType || 'Standard'}, Roster Start: ${rosterStart || 'N/A'}, Roster End: ${rosterEnd || 'N/A'}`);
                     }
                 }
                 
                 console.log(`=== MINISTRY XML PROCESSING COMPLETE ===`);
-                console.log(`Total unique patients found: ${mohData.length}`);
+                console.log(`Total rows processed: ${totalProcessed}`);
+                console.log(`Valid patients (included): ${validPatients}`);
+                console.log(`Excluded by roster end date: ${excludedByRosterEnd}`);
+                console.log(`Excluded by reason code (REMOVE FROM ROSTER): ${excludedByReasonCode}`);
+                console.log(`Excluded by consent status (Revoked/Ended): ${excludedByConsent}`);
+                console.log(`Excluded by invalid health card: ${excludedByInvalidHealthCard}`);
+                console.log(`Duplicates skipped: ${duplicates}`);
                 console.log(`Sample patients:`, mohData.slice(0, 3));
                 
-                // Return full patient data for comparison
-                return mohData;
+                // Separate new patients
+                const newPatients = mohData.filter(patient => patient._is_new_patient);
+                
+                // Return comprehensive data structure
+                return {
+                    activePatients: mohData,
+                    newPatients: newPatients,
+                    rosterEndPatients: rosterEndPatients,
+                    statistics: {
+                        totalProcessed: totalProcessed,
+                        validPatients: validPatients,
+                        excludedByRosterEnd: excludedByRosterEnd,
+                        excludedByReasonCode: excludedByReasonCode,
+                        excludedByConsent: excludedByConsent,
+                        excludedByInvalidHealthCard: excludedByInvalidHealthCard,
+                        duplicates: duplicates,
+                        newPatientsCount: newPatients.length,
+                        rosterEndCount: rosterEndPatients.length
+                    }
+                };
                 
             } catch (xmlError) {
                 console.log('Structured XML parsing failed, trying text extraction:', xmlError);
@@ -2083,9 +2203,16 @@
             const resultsContent = document.getElementById('resultsContent');
             resultsContent.innerHTML = '';
 
+
             // Always display EMR-only and MOH-only results
             displayAnalysisSection(`Patients on EMR Roster but Not on MOH List (${analysisResults.length})`, analysisResults, 'These patients are on your EMR list but not on the Ministry roster - consider rostering them with q200 if appropriate');
             displayAnalysisSection(`Patients on MOH List but Not on EMR Roster (${mohOnlyResults.length})`, mohOnlyResults, 'These patients are on the Ministry roster but not in your EMR - they may have left your practice');
+            
+            // Display new sections for roster end and new patients
+            if (rosterEndResults.length > 0) {
+                displayAnalysisSection(`Patients Who Came Off Ministry Roster (${rosterEndResults.length})`, rosterEndResults, 'These patients have come off the Ministry roster - you may want to remove them from your EMR roster or investigate why they left');
+            }
+            
         }
 
         function displayAnalysisSection(title, results, description) {
@@ -2116,14 +2243,24 @@
                     const patientItem = document.createElement('div');
                     patientItem.className = 'patient-item';
                     
-                    let patientName, healthCard;
+                    let patientName, healthCard, reasonCode, consentStatus, patientType, rosterStart, rosterEnd;
                     if (typeof patient === 'string') {
                         // Ministry-only results might be just health card numbers
                         healthCard = patient;
                         patientName = 'Unknown';
+                        reasonCode = '';
+                        consentStatus = '';
+                        patientType = '';
+                        rosterStart = '';
+                        rosterEnd = '';
                     } else {
                         healthCard = patient.healthCard || patient['Health Number'];
                         patientName = patient.name || patient['Patient Name'] || 'Unknown';
+                        reasonCode = patient['Reason Code'] || '';
+                        consentStatus = patient['Consent Status'] || '';
+                        patientType = patient['Patient Type'] || '';
+                        rosterStart = patient['Roster Start'] || patient['_roster_start_date'] || '';
+                        rosterEnd = patient['Roster End'] || patient['_roster_end_date'] || '';
                         
                         // Debug logging for first few patients
                         if (index < 3) {
@@ -2132,10 +2269,40 @@
                         }
                     }
                     
+                    // Create additional info display
+                    let additionalInfo = '';
+                    if (reasonCode || consentStatus || patientType || rosterStart || rosterEnd) {
+                        const infoParts = [];
+                        if (reasonCode) infoParts.push(`Reason: ${reasonCode}`);
+                        if (consentStatus) {
+                            const statusText = consentStatus === 'P' ? 'PENDING' : 
+                                             consentStatus === 'R' ? 'REVOKED' : 
+                                             consentStatus === 'N' ? 'ENDED' : consentStatus;
+                            infoParts.push(`Consent: ${statusText}`);
+                        }
+                        if (patientType) {
+                            const typeText = patientType === 'LTC' ? 'LONG-TERM CARE' :
+                                           patientType === 'FHG' ? 'FHG ASSIGNED' :
+                                           patientType === 'FEP' ? 'FRAIL ELDERLY' :
+                                           patientType === 'PME' ? 'PRE-MEMBER' : patientType;
+                            infoParts.push(`Type: ${typeText}`);
+                        }
+                        if (rosterStart) {
+                            infoParts.push(`Roster Start: ${rosterStart}`);
+                        }
+                        if (rosterEnd) {
+                            infoParts.push(`Roster End: ${rosterEnd}`);
+                        }
+                        if (infoParts.length > 0) {
+                            additionalInfo = `<div class="patient-additional-info" style="font-size: 0.85em; color: #666; margin-top: 5px;">${infoParts.join(' • ')}</div>`;
+                        }
+                    }
+                    
                     patientItem.innerHTML = `
                         <div class="patient-info">
                             <div class="health-card">${healthCard}</div>
                             <div class="patient-name">${patientName}</div>
+                            ${additionalInfo}
                         </div>
                     `;
                     patientList.appendChild(patientItem);
@@ -2154,24 +2321,49 @@
             const mimeType = 'text/csv';
             const dateStr = new Date().toISOString().split('T')[0];
 
-            // Export both EMR-only and MOH-only results
-            content = 'Analysis Type,Health Card Number,Patient Name,Description\n';
+            // Export all results with additional fields including roster dates
+            content = 'Analysis Type,Health Card Number,Patient Name,Reason Code,Consent Status,Patient Type,Roster Start,Roster End,Description\n';
             
             // EMR Only
             analysisResults.forEach(patient => {
-                content += `EMR Only,${patient.healthCard},${patient.name},Patients in EMR but not on Ministry roster\n`;
+                const healthCard = patient.healthCard || '';
+                const name = patient.name || 'Unknown';
+                const reasonCode = patient['Reason Code'] || '';
+                const consentStatus = patient['Consent Status'] || '';
+                const patientType = patient['Patient Type'] || '';
+                const rosterStart = patient['Roster Start'] || '';
+                const rosterEnd = patient['Roster End'] || '';
+                content += `EMR Only,"${healthCard}","${name}","${reasonCode}","${consentStatus}","${patientType}","${rosterStart}","${rosterEnd}",Patients in EMR but not on Ministry roster\n`;
             });
             
             // Ministry Only
             mohOnlyResults.forEach(patient => {
-                const healthCard = typeof patient === 'string' ? patient : patient['Health Number'];
+                const healthCard = typeof patient === 'string' ? patient : (patient['Health Number'] || '');
                 const name = typeof patient === 'string' ? 'Unknown' : (patient['Patient Name'] || 'Unknown');
-                content += `Ministry Only,${healthCard},${name},Patients on Ministry roster but not in EMR\n`;
+                const reasonCode = typeof patient === 'string' ? '' : (patient['Reason Code'] || '');
+                const consentStatus = typeof patient === 'string' ? '' : (patient['Consent Status'] || '');
+                const patientType = typeof patient === 'string' ? '' : (patient['Patient Type'] || '');
+                const rosterStart = typeof patient === 'string' ? '' : (patient['Roster Start'] || '');
+                const rosterEnd = typeof patient === 'string' ? '' : (patient['Roster End'] || '');
+                content += `Ministry Only,"${healthCard}","${name}","${reasonCode}","${consentStatus}","${patientType}","${rosterStart}","${rosterEnd}",Patients on Ministry roster but not in EMR\n`;
             });
+            
+            // Roster End Patients
+            rosterEndResults.forEach(patient => {
+                const healthCard = patient['Health Number'] || '';
+                const name = patient['Patient Name'] || 'Unknown';
+                const reasonCode = patient['Reason Code'] || '';
+                const consentStatus = patient['Consent Status'] || '';
+                const patientType = patient['Patient Type'] || '';
+                const rosterStart = patient['Roster Start'] || '';
+                const rosterEnd = patient['Roster End'] || patient['_roster_end_date'] || '';
+                content += `Roster End,"${healthCard}","${name}","${reasonCode}","${consentStatus}","${patientType}","${rosterStart}","${rosterEnd}",Patients who came off Ministry roster\n`;
+            });
+            
             
             filename = `roster-optimizer-results-${dateStr}.csv`;
 
-            if (!content || content === 'Health Card Number,Patient Name\n') {
+            if (!content || content === 'Analysis Type,Health Card Number,Patient Name,Reason Code,Consent Status,Patient Type,Description\n') {
                 showStatus('No data to export', 'error');
                 return;
             }
@@ -2186,7 +2378,7 @@
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
 
-            showStatus(`Results exported as ${format.toUpperCase()}`, 'success');
+            showStatus(`Results exported as ${format.toUpperCase()} with detailed filtering information`, 'success');
         }
 
         function newAnalysis() {
